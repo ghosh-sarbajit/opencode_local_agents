@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# Serve Gemma-4-31B-it locally with vLLM for opencode, drafted by its MTP
+# "assistant" checkpoint (gemma-4-31B-it-assistant) via speculative decoding.
+#
+#   start-gemma4 16            16-bit (bf16 weights, fp8 KV, TRITON_ATTN)
+#                                GPU0, util 0.94
+#                                (needs ~77 GiB free: stop the qwen server
+#                                 or point GPU= at a free card; bf16 KV cannot
+#                                 fit 74400 on one 80G card, so fp8 KV is
+#                                 mandatory - see the backend history below)
+#   start-gemma4 8             8-bit  (fp8)      GPU5, util 0.55
+#   start-gemma4 stop          stop the running server
+#   start-gemma4 status        show state
+#
+# Env overrides: GPU=<n>  PORT=<n> (default 42070)  MAXLEN=<n> (default 74400)
+#                MAXSEQ=<n> (default 32)   SPECS=<n> (MTP draft tokens, default 6)
+#                THINK=0 (disable the template's enable_thinking)
+#                FORCE=1 (skip the free-memory guard)
+#                WAIT=1 (poll until the memory is free, then start)
+#                DRYRUN=1 (print the command, exit)
+set -euo pipefail
+
+MODEL=/opt/dlami/nvme/sarbajit/local_models/gemma4/gemma-4-31B-it
+# MTP drafter: 4-layer, hidden 1024, ~0.9 GiB; predicts ahead and the 60-layer
+# target verifies the block in one forward (Gemma4Proposer in vLLM).
+DRAFT=/opt/dlami/nvme/sarbajit/local_models/gemma4/gemma-4-31B-it-assistant
+VLLM=/opt/dlami/nvme/sarbajit/miniconda3/bin/vllm
+# flashinfer's JIT and torch.compile shell out to ninja; it lives here.
+export PATH="/opt/dlami/nvme/sarbajit/miniconda3/bin:$PATH"
+HOST=127.0.0.1
+PORT=${PORT:-42070}
+# Same budget as the qwen server: opencode's send wall sits at MAXLEN-32000,
+# and MAXLEN=74400 keeps 8864 tokens of slack above the 65536 compaction
+# call. Gemma-4 KV is cheap (50/60 layers are 1024-window sliding, global
+# layers share K/V with 4 KV heads), so the KV cost is a few GiB at most;
+# the exact figure is printed as "Available KV cache memory" at boot.
+MAXLEN=${MAXLEN:-74400}
+# Gemma-4 stores a fat sliding window per concurrent sequence (16 KV heads x
+# 256 head_dim over 1024 tokens per sliding layer), so a local agent's 1-4
+# concurrent sequences are fine but a large fan-out would thrash the pool.
+MAXSEQ=${MAXSEQ:-32}
+# Draft tokens per verify step; 6 matches the checkpoint's own
+# generation_config.json (num_assistant_tokens: 6). vLLM warns that >1
+# re-runs the same MTP layer per step (acceptance decays with depth) - set
+# SPECS=1 to disable multi-token drafting if throughput regresses.
+SPECS=${SPECS:-6}
+# Gemma 4's chat template keeps thinking OFF unless enable_thinking is set;
+# opencode declares reasoning:true, so turn it on by default.
+THINK=${THINK:-1}
+API_KEY=EMPTY
+
+STATE_DIR="$HOME/.local/state/gemma4"
+PIDFILE="$STATE_DIR/server.pid"
+LOGFILE="$STATE_DIR/server.log"
+mkdir -p "$STATE_DIR"
+
+usage() { sed -n '2,20p' "$0"; exit 1; }
+
+alive() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+
+healthy() {
+  curl -sf -m 5 -H "Authorization: Bearer $API_KEY" "http://$HOST:$PORT/v1/models" >/dev/null 2>&1
+}
+
+cmd=${1:-}
+case "$cmd" in
+  stop)
+    if alive; then
+      pid=$(cat "$PIDFILE")
+      kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+      for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+      kill -KILL -- "-$pid" 2>/dev/null || true
+      echo "stopped (was pid $pid)"
+    else
+      echo "no running server"
+    fi
+    rm -f "$PIDFILE"
+    exit 0
+    ;;
+  status)
+    if healthy; then
+      echo "healthy on http://$HOST:$PORT  model=$(curl -sf -H "Authorization: Bearer $API_KEY" "http://$HOST:$PORT/v1/models" | grep -o '"id": *"[^"]*"' | head -1 | cut -d'"' -f4)"
+      nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader | grep -w "$(cat "$PIDFILE" 2>/dev/null || echo 0)" || true
+    elif alive; then
+      echo "starting (pid $(cat "$PIDFILE")); see $LOGFILE"
+    else
+      echo "not running"
+    fi
+    exit 0
+    ;;
+  16|8) ;;
+  *) usage ;;
+esac
+
+if healthy && [ "${FORCE:-0}" != 1 ] && [ "${DRYRUN:-0}" != 1 ]; then
+  echo "server already healthy on port $PORT; run 'start-gemma4 stop' first (or FORCE=1)"
+  exit 1
+fi
+
+# Measured at the failed 16-bit boot: bf16 weights + MTP + activations +
+# graphs consume ~62.9 GiB (window 73403 - KV 8960 at util 0.90). vLLM
+# reserves 0.257 MiB/token for KV (all 60 layers), i.e. 18.97 GiB at 74400,
+# so bf16 KV alone would need 62.9 + 19.0 = 83.6 GiB > 79.65 GiB physical:
+# 74400 in pure bf16 is impossible on one H100. --kv-cache-dtype fp8 halves
+# the reservation (9.5 GiB) and util 0.94 gives ~12 GiB of fp8 KV. Backend
+# history for fp8 KV + spec-decode, in order tried:
+#   auto        -> FLASH_ATTN invalid ("requires FA3": get_flash_attn_version
+#                   falls back to FA2 for this head/sink/block combo), then
+#                   FLASHINFER selected -> its fa2 JIT asserts during graph
+#                   capture ("fp8 tensor core is not supported in fa2 backend")
+#   FLASH_ATTN   -> validation: "FP8 KV cache requires FA3 on SM90 or FA4 SM100"
+#   TRITON_ATTN  -> lists fp8/fp8_e4m3 as supported KV dtypes and H100 has
+#                   native fp8e4nv (>= 8.9); this is the supported fallback
+case "$cmd" in
+  16) GPU_DEFAULT=0; QUANT=();           KVFP8=(--kv-cache-dtype fp8);  ATTN=(--attention-backend TRITON_ATTN); UTIL=0.94; NAME=gemma-4-31b-bf16 ;;
+   8) GPU_DEFAULT=5; QUANT=(--quantization fp8); KVFP8=(); ATTN=();      UTIL=0.55; NAME=gemma-4-31b-fp8 ;;
+esac
+GPU=${GPU:-$GPU_DEFAULT}
+
+if alive && [ "${FORCE:-0}" != 1 ] && [ "${DRYRUN:-0}" != 1 ]; then
+  echo "a server process is already recorded (pid $(cat "$PIDFILE")); run 'start-gemma4 stop'"
+  exit 1
+fi
+
+free=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits -i "$GPU")
+total=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits -i "$GPU")
+need=$(awk -v t="$total" -v u="$UTIL" 'BEGIN{printf "%d", t*u}')
+if [ "$free" -lt "$need" ]; then
+  if [ "${WAIT:-0}" = 1 ]; then
+    echo "waiting for GPU $GPU to free ${need}MiB (currently ${free}MiB); polling every 60s; log=$LOGFILE"
+    while [ "$free" -lt "$need" ]; do
+      sleep 60
+      if healthy; then echo "server became healthy elsewhere; nothing to do"; exit 0; fi
+      free=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits -i "$GPU")
+      echo "  $(date +%H:%M:%S) GPU $GPU free=${free}MiB / need=${need}MiB"
+    done
+  elif [ "${FORCE:-0}" != 1 ] && [ "${DRYRUN:-0}" != 1 ]; then
+    echo "REFUSED: GPU $GPU has ${free}MiB free but util $UTIL requires ${need}MiB."
+    echo "Use another GPU (GPU=<n> start-gemma4 $cmd), free the job holding it, WAIT=1, or FORCE=1."
+    exit 1
+  fi
+fi
+echo "mode=$cmd gpu=$GPU free=${free}MiB util=$UTIL need=${need}MiB quant=${QUANT[*]:-none} name=$NAME"
+echo "draft=$DRAFT specs=$SPECS think=$THINK maxlen=$MAXLEN kv=${KVFP8[*]:-bf16} attn=${ATTN[*]:-auto}"
+echo "log=$LOGFILE"
+
+if [ "$THINK" = 0 ]; then
+  TEMPLATE_KWARGS='{"enable_thinking": false}'
+else
+  TEMPLATE_KWARGS='{"enable_thinking": true}'
+fi
+SPEC_JSON=$(printf '{"model": "%s", "num_speculative_tokens": %s, "max_model_len": %s}' "$DRAFT" "$SPECS" "$MAXLEN")
+
+ARGS=(
+  env CUDA_VISIBLE_DEVICES="$GPU" "$VLLM" serve "$MODEL"
+  --served-model-name "$NAME"
+  --host "$HOST" --port "$PORT"
+  --api-key "$API_KEY"
+  --trust-remote-code
+  --dtype bfloat16
+  --max-model-len "$MAXLEN"
+  --max-num-seqs "$MAXSEQ"
+  --gpu-memory-utilization "$UTIL"
+  ${QUANT[@]+"${QUANT[@]}"}
+  ${KVFP8[@]+"${KVFP8[@]}"}
+  ${ATTN[@]+"${ATTN[@]}"}
+  --speculative-config "$SPEC_JSON"
+  --enable-auto-tool-choice
+  --tool-call-parser gemma4
+  --reasoning-parser gemma4
+  --default-chat-template-kwargs "$TEMPLATE_KWARGS"
+)
+
+if [ "${DRYRUN:-0}" = 1 ]; then
+  echo "DRYRUN (not launching):"
+  printf '%q ' "${ARGS[@]}"
+  echo
+  exit 0
+fi
+
+setsid nohup "${ARGS[@]}" >>"$LOGFILE" 2>&1 &
+
+PID=$!
+echo "$PID" > "$PIDFILE"
+echo "started pid=$PID (process group leader)"
+
+echo "waiting for readiness (up to 20 min)..."
+for i in $(seq 1 240); do
+  if healthy; then
+    echo "READY  $NAME  ->  http://$HOST:$PORT/v1"
+    exit 0
+  fi
+  if ! kill -0 "$PID" 2>/dev/null; then
+    echo "FAILED: server process died; last 40 log lines:"
+    tail -40 "$LOGFILE"
+    rm -f "$PIDFILE"
+    exit 1
+  fi
+  sleep 5
+done
+echo "TIMEOUT after 20 min; see $LOGFILE"
+exit 1

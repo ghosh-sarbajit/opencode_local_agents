@@ -1,0 +1,77 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // vLLM serves --max-model-len 74400. opencode requests
+  // min(limit.output, 32000) = 32000 completion tokens and fires compaction
+  // at context - requested_output = 65536 - 32000 = 33536 prompt tokens, so
+  // a send is only rejected above 74400 - 32000 = 42400 prompt tokens:
+  // 8864 tokens of slack for compaction to run, and the compaction call
+  // itself (33536 + 32000 = 65536) now fits instead of overflowing.
+"compaction": { "auto": true, "prune": true },
+  "provider": {
+    "qwen-local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Qwen3.8-27B (local vLLM)",
+      "options": {
+        "baseURL": "http://127.0.0.1:42069/v1",
+        "apiKey": "EMPTY"
+      },
+      "models": {
+        "qwen3.8-27b-bf16": {
+          "name": "Qwen3.8-27B 16-bit (local)",
+          "tool_call": true,
+          "attachment": true,
+          "reasoning": true,
+          "interleaved": "reasoning",
+          "limit": { "context": 65536, "output": 32768 },
+          "cost": { "input": 0, "output": 0 }
+        },
+        "qwen3.8-27b-fp8": {
+          "name": "Qwen3.8-27B 8-bit (local)",
+          "tool_call": true,
+          "attachment": true,
+          "reasoning": true,
+          "interleaved": "reasoning",
+          "limit": { "context": 65536, "output": 32768 },
+          "cost": { "input": 0, "output": 0 }
+        },
+        "qwen3.8-27b-mxfp4": {
+          "name": "Qwen3.8-27B 4-bit (local)",
+          "tool_call": true,
+          "attachment": true,
+          "reasoning": true,
+          "interleaved": "reasoning",
+          "limit": { "context": 65536, "output": 32768 },
+          "cost": { "input": 0, "output": 0 }
+        }
+      }
+    },
+    "gemma-local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Gemma-4-31B (local vLLM)",
+      "options": {
+        "baseURL": "http://127.0.0.1:42070/v1",
+        "apiKey": "EMPTY"
+      },
+      "models": {
+        "gemma-4-31b-bf16": {
+          "name": "Gemma-4-31B 16-bit (local)",
+          "tool_call": true,
+          "attachment": true,
+          "reasoning": true,
+          "interleaved": "reasoning",
+          "limit": { "context": 65536, "output": 32768 },
+          "cost": { "input": 0, "output": 0 }
+        },
+        "gemma-4-31b-fp8": {
+          "name": "Gemma-4-31B 8-bit (local)",
+          "tool_call": true,
+          "attachment": true,
+          "reasoning": true,
+          "interleaved": "reasoning",
+          "limit": { "context": 65536, "output": 32768 },
+          "cost": { "input": 0, "output": 0 }
+        }
+      }
+    }
+  }
+}
