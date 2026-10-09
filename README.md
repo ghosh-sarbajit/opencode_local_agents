@@ -21,6 +21,7 @@ opencode_local_agents/
 ├── bin/start-gemma4      ->  ~/.local/bin/start-gemma4    (chmod +x)
 ├── shell/aliases.sh      ->  append to ~/.bashrc          (sqwen/sgemma)
 ├── opencode/config.jsonc ->  merge into ~/.config/opencode/opencode.jsonc
+├── opencode/skills/      ->  copy into ~/.config/opencode/skills/
 └── README.md             ->  this file
 ```
 
@@ -81,6 +82,21 @@ means changing the other.
 
 **opencode reads config at startup only.** After any edit: restart the TUI
 (or `opencode run -m <provider>/<model>` for one-shots).
+
+### 4. `opencode/skills/` — agent skills
+
+| Skill | What it does |
+|---|---|
+| `paper_citation_download` | Turns a list of paper titles into a `.bib` in Google Scholar's BibTeX style, with `howpublished = "\url{DOI \| official page \| arXiv}"` and a short `comment` added to each entry. `scripts/fetch_bib.py` does the lookups: Scholar when it answers, otherwise DBLP, OpenReview, Crossref, Semantic Scholar, arXiv, OpenAlex, and the PMLR/NeurIPS indexes. It writes a review report, and the agent then resolves the flagged entries and fills in the comments. |
+
+```bash
+mkdir -p ~/.config/opencode/skills
+cp -r opencode/skills/* ~/.config/opencode/skills/
+```
+
+Then restart opencode and ask, e.g. *"make references.bib for the papers in
+papers.txt"*. Optional env: `S2_API_KEY` (avoids Semantic Scholar 429s),
+`CROSSREF_MAILTO`.
 
 ## Usage
 
