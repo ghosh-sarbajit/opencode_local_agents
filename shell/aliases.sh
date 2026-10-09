@@ -33,6 +33,41 @@ sqwen() {
     esac
 }
 
+# qwen3.8 fable-distill server shortcut -> start-qwen38-distill
+sqwend() {
+    local mode="${1:-}"
+    local gpu="${2:-}"
+
+    if [ -z "$mode" ]; then
+        echo "Usage:"
+        echo "  sqwend <16|8|4> [gpu]   start the server, e.g. sqwend 16 0 (GPU default: 16/8->0, 4->5)"
+        echo "  sqwend stop             stop the server"
+        echo "  sqwend status           health, model id, GPU pid"
+        echo "  DRYRUN=1 sqwend 16 0   print the command instead of launching"
+        echo "Env passthrough: PORT=... MAXLEN=... MAXSEQ=... EFFORT=... WAIT=1 FORCE=1 DRYRUN=1"
+        return 1
+    fi
+
+    if ! command -v start-qwen38-distill >/dev/null 2>&1; then
+        echo "sqwend: start-qwen38-distill not found on PATH (~/.local/bin)" >&2
+        return 127
+    fi
+
+    case "$mode" in
+        16|8|4|stop|status)
+            if [ -n "$gpu" ]; then
+                GPU="$gpu" start-qwen38-distill "$mode"
+            else
+                start-qwen38-distill "$mode"
+            fi
+            ;;
+        *)
+            echo "sqwend: unknown mode '$mode' (expected 16, 8, 4, stop or status)" >&2
+            return 1
+            ;;
+    esac
+}
+
 # gemma-4 server shortcut -> start-gemma4 (MTP drafter for speculative decoding)
 sgemma() {
     local mode="${1:-}"

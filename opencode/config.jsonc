@@ -45,6 +45,43 @@
         }
       }
     },
+    "qwen-distill-local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Qwen3.8-27B-Fable-Distill (local vLLM)",
+      "options": {
+        "baseURL": "http://127.0.0.1:42071/v1",
+        "apiKey": "EMPTY"
+      },
+      "models": {
+        "qwen3.8-27b-distill-bf16": {
+          "name": "Qwen3.8-27B-Fable-Distill 16-bit (local)",
+          "tool_call": true,
+          "attachment": true,
+          "reasoning": true,
+          "interleaved": "reasoning",
+          "limit": { "context": 65536, "output": 32768 },
+          "cost": { "input": 0, "output": 0 }
+        },
+        "qwen3.8-27b-distill-fp8": {
+          "name": "Qwen3.8-27B-Fable-Distill 8-bit (local)",
+          "tool_call": true,
+          "attachment": true,
+          "reasoning": true,
+          "interleaved": "reasoning",
+          "limit": { "context": 65536, "output": 32768 },
+          "cost": { "input": 0, "output": 0 }
+        },
+        "qwen3.8-27b-distill-mxfp4": {
+          "name": "Qwen3.8-27B-Fable-Distill 4-bit (local)",
+          "tool_call": true,
+          "attachment": true,
+          "reasoning": true,
+          "interleaved": "reasoning",
+          "limit": { "context": 65536, "output": 32768 },
+          "cost": { "input": 0, "output": 0 }
+        }
+      }
+    },
     "gemma-local": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Gemma-4-31B (local vLLM)",

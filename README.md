@@ -1,11 +1,12 @@
 # opencode_local_agents
 
 Local vLLM servers and opencode wiring so opencode runs entirely on this
-box's H100s — no API key, no traffic leaving the machine. Two agents:
+box's H100s — no API key, no traffic leaving the machine. Three agents:
 
 | Agent | Weights | Port | Shortcut | Launcher |
 |---|---|---|---|---|
 | **Qwen3.8-27B** | bf16 / fp8 / mxfp4 | 42069 | `sqwen <16\|8\|4>` | `bin/start-qwen38` |
+| **Qwen3.8-27B-Fable-Distill** | bf16 / fp8 / mxfp4 | 42071 | `sqwend <16\|8\|4>` | `bin/start-qwen38-distill` |
 | **Gemma-4-31B-it** | bf16+fp8-KV / fp8 | 42070 | `sgemma <16\|8>` | `bin/start-gemma4` |
 
 Both are drafted with multi-token prediction where available (Gemma uses its
@@ -18,28 +19,35 @@ reasoning parsers.
 ```
 opencode_local_agents/
 ├── bin/start-qwen38      ->  ~/.local/bin/start-qwen38    (chmod +x)
+├── bin/start-qwen38-distill -> ~/.local/bin/start-qwen38-distill (chmod +x)
 ├── bin/start-gemma4      ->  ~/.local/bin/start-gemma4    (chmod +x)
-├── shell/aliases.sh      ->  append to ~/.bashrc          (sqwen/sgemma)
+├── shell/aliases.sh      ->  append to ~/.bashrc          (sqwen/sqwend/sgemma)
 ├── opencode/config.jsonc ->  merge into ~/.config/opencode/opencode.jsonc
 ├── opencode/skills/      ->  copy into ~/.config/opencode/skills/
 └── README.md             ->  this file
 ```
 
-### 1. `bin/start-qwen38`, `bin/start-gemma4` — launchers
+### 1. `bin/start-qwen38`, `bin/start-qwen38-distill`, `bin/start-gemma4` — launchers
 
 Each is a self-contained bash script: mode select, free-memory preflight
 (refuses to launch unless `util × total` MiB are free), `setsid nohup` vLLM,
 20-minute readiness poll, `stop`/`status` via pidfile, `DRYRUN=1` prints the
-exact vLLM argv. State lives in `~/.local/state/{qwen38,gemma4}/`.
+exact vLLM argv. State lives in `~/.local/state/{qwen38,qwen38-distill,gemma4}/`.
 
 ```bash
-install -m 755 bin/start-qwen38 bin/start-gemma4 ~/.local/bin/
+install -m 755 bin/start-qwen38 bin/start-qwen38-distill bin/start-gemma4 ~/.local/bin/
 ```
 
-Env overrides (both): `GPU= <n>` `PORT= <n>` `MAXLEN= <n>` `MAXSEQ= <n>`
+Env overrides (all): `GPU= <n>` `PORT= <n>` `MAXLEN= <n>` `MAXSEQ= <n>`
 `FORCE=1` `WAIT=1` (poll until the card frees) `DRYRUN=1`.
 Gemma also: `SPECS=<n>` (MTP draft depth, default 6) `THINK=0|1`.
-Qwen also: `EFFORT=xhigh|medium|low`.
+Qwen (both) also: `EFFORT=xhigh|medium|low`.
+
+`start-qwen38-distill` is `start-qwen38` with a different model path, port
+(42071), state dir and served names (`qwen3.8-27b-distill-*`). The distill
+has the same `qwen3_5` architecture and tensor layout as the base, so the
+same quantization targets, util values and parsers apply. It runs on its own
+port, so it can be up at the same time as `start-qwen38` on another GPU.
 
 Paths hardcoded at the top of each script — adjust if the models or the
 vLLM conda env move:
@@ -47,17 +55,18 @@ vLLM conda env move:
 | | value |
 |---|---|
 | Qwen weights | `/opt/dlami/nvme/sarbajit/local_models/Qwen3.8-27B` |
+| Qwen distill weights | `/opt/dlami/nvme/sarbajit/local_models/Qwen3.8-27B-Fable-Distill` |
 | Gemma weights | `/opt/dlami/nvme/sarbajit/local_models/gemma4/gemma-4-31B-it` |
 | Gemma MTP drafter | `.../gemma-4-31B-it-assistant` |
 | vLLM | `/opt/dlami/nvme/sarbajit/miniconda3/bin/vllm` (v0.30.0) |
 
 ### 2. `shell/aliases.sh` — bashrc shortcuts
 
-`sqwen` / `sgemma` are thin wrappers that forward `<mode> [gpu]` and the
+`sqwen` / `sqwend` / `sgemma` are thin wrappers that forward `<mode> [gpu]` and the
 env passthrough to the launchers. Append to `~/.bashrc`, then
 `source ~/.bashrc`. They're functions, so they only exist in interactive
 shells that have read bashrc — scripts should call `start-qwen38` /
-`start-gemma4` directly.
+`start-qwen38-distill` / `start-gemma4` directly.
 
 ```bash
 cat shell/aliases.sh >> ~/.bashrc
@@ -71,9 +80,10 @@ Merge (don't blind-copy unless this is a fresh config) into
 - `compaction`: `{ "auto": true, "prune": true }` — `prune` differs from the
   opencode default (`false`); it keeps compaction from ballooning.
 - `provider.qwen-local` — 3 models on `127.0.0.1:42069`
+- `provider.qwen-distill-local` — 3 models on `127.0.0.1:42071`
 - `provider.gemma-local` — 2 models on `127.0.0.1:42070`
 
-Both declare `limit: { context: 65536, output: 32768 }`. That pairs with
+All declare `limit: { context: 65536, output: 32768 }`. That pairs with
 the launchers' `MAXLEN=74400`: opencode's send wall sits at
 `MAXLEN - 32000 = 42400` prompt tokens, compaction fires at
 `65536 - 32000 = 33536`, and the compaction call itself
@@ -102,6 +112,7 @@ papers.txt"*. Optional env: `S2_API_KEY` (avoids Semantic Scholar 429s),
 
 ```bash
 sqwen 16            # qwen bf16   on GPU0
+sqwend 8 2          # qwen fable-distill fp8 on GPU2
 sgemma 16           # gemma bf16 + fp8 KV + TRITON_ATTN + MTP on GPU0
 sgemma status
 sgemma stop
@@ -109,9 +120,10 @@ sgemma stop
 # one-shot / scripted:
 opencode run -m gemma-local/gemma-4-31b-bf16 "hello"
 opencode run -m qwen-local/qwen3.8-27b-bf16  "hello"
+opencode run -m qwen-distill-local/qwen3.8-27b-distill-bf16 "hello"
 ```
 
-Mode-16 for either model wants the whole card (~77 GiB free) — they can't
+Mode-16 for any model wants the whole card (~77 GiB free) — they can't
 share a GPU with each other. Mode 8/4 are the co-resident options.
 
 ## Gotchas worth knowing

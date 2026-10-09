@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# Serve Qwen3.8-27B-Fable-Distill locally with vLLM for opencode.
+#
+#   start-qwen38-distill 16      16-bit (bf16)      GPU0, util 0.94
+#   start-qwen38-distill 8       8-bit  (fp8)       GPU0, util 0.50
+#   start-qwen38-distill 4       4-bit  (mxfp4)     GPU5, util 0.35
+#                                                   (vision tower stays bf16: its
+#                                                    4304-wide MLP cannot be mxfp4)
+#   start-qwen38-distill stop    stop the running server
+#   start-qwen38-distill status  show state
+#
+# Env overrides: GPU=<n>  PORT=<n> (default 42071)  MAXLEN=<n> (default 74400)
+#                MAXSEQ=<n>
+#                EFFORT=xhigh|medium|low  FORCE=1 (skip the free-memory guard)
+#                WAIT=1 (poll until the memory is free, then start)
+#                DRYRUN=1 (print the command, exit)
+set -euo pipefail
+
+MODEL=/opt/dlami/nvme/sarbajit/local_models/Qwen3.8-27B-Fable-Distill
+VLLM=/opt/dlami/nvme/sarbajit/miniconda3/bin/vllm
+# flashinfer's JIT and torch.compile shell out to ninja; it lives here.
+export PATH="/opt/dlami/nvme/sarbajit/miniconda3/bin:$PATH"
+HOST=127.0.0.1
+PORT=${PORT:-42071}
+# KV is ~0.27 MiB/token (17.2 GiB buys 65536 at util 0.90), so 74400 needs
+# ~19.5 GiB: util 0.94 leaves ~0.8 GiB of slack on top of that.
+MAXLEN=${MAXLEN:-74400}
+# qwen3_5 hybrid layers need one Mamba cache block per concurrent sequence;
+# the default max_num_seqs (1024) exceeds the blocks the KV budget allows.
+MAXSEQ=${MAXSEQ:-64}
+# xhigh is the template's maximum (only xhigh|medium|low exist; anything
+# else raises in the Jinja template). Default to it: this is a local server.
+EFFORT=${EFFORT:-xhigh}
+API_KEY=EMPTY
+
+STATE_DIR="$HOME/.local/state/qwen38-distill"
+PIDFILE="$STATE_DIR/server.pid"
+LOGFILE="$STATE_DIR/server.log"
+mkdir -p "$STATE_DIR"
+
+usage() { sed -n '2,15p' "$0"; exit 1; }
+
+alive() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+
+healthy() {
+  curl -sf -m 5 -H "Authorization: Bearer $API_KEY" "http://$HOST:$PORT/v1/models" >/dev/null 2>&1
+}
+
+cmd=${1:-}
+case "$cmd" in
+  stop)
+    if alive; then
+      pid=$(cat "$PIDFILE")
+      kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+      for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+      kill -KILL -- "-$pid" 2>/dev/null || true
+      echo "stopped (was pid $pid)"
+    else
+      echo "no running server"
+    fi
+    rm -f "$PIDFILE"
+    exit 0
+    ;;
+  status)
+    if healthy; then
+      echo "healthy on http://$HOST:$PORT  model=$(curl -sf -H "Authorization: Bearer $API_KEY" "http://$HOST:$PORT/v1/models" | grep -o '"id": *"[^"]*"' | head -1 | cut -d'"' -f4)"
+      nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader | grep -w "$(cat "$PIDFILE" 2>/dev/null || echo 0)" || true
+    elif alive; then
+      echo "starting (pid $(cat "$PIDFILE")); see $LOGFILE"
+    else
+      echo "not running"
+    fi
+    exit 0
+    ;;
+  16|8|4) ;;
+  *) usage ;;
+esac
+
+if healthy && [ "${FORCE:-0}" != 1 ] && [ "${DRYRUN:-0}" != 1 ]; then
+  echo "server already healthy on port $PORT; run 'start-qwen38-distill stop' first (or FORCE=1)"
+  exit 1
+fi
+
+case "$cmd" in
+  16) GPU_DEFAULT=0; QUANT=();     UTIL=0.94; NAME=qwen3.8-27b-distill-bf16 ;;
+   8) GPU_DEFAULT=0; QUANT=(--quantization fp8);  UTIL=0.50; NAME=qwen3.8-27b-distill-fp8 ;;
+   4) GPU_DEFAULT=5; QUANT=(--quantization online --quantization-config '{"targets": {"re:(?!.*visual)(?:.*_proj|lm_head).*": "mxfp4"}}'); UTIL=0.35; NAME=qwen3.8-27b-distill-mxfp4 ;;
+esac
+GPU=${GPU:-$GPU_DEFAULT}
+
+if alive && [ "${FORCE:-0}" != 1 ] && [ "${DRYRUN:-0}" != 1 ]; then
+  echo "a server process is already recorded (pid $(cat "$PIDFILE")); run 'start-qwen38-distill stop'"
+  exit 1
+fi
+
+free=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits -i "$GPU")
+total=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits -i "$GPU")
+need=$(awk -v t="$total" -v u="$UTIL" 'BEGIN{printf "%d", t*u}')
+if [ "$free" -lt "$need" ]; then
+  if [ "${WAIT:-0}" = 1 ]; then
+    echo "waiting for GPU $GPU to free ${need}MiB (currently ${free}MiB); polling every 60s; log=$LOGFILE"
+    while [ "$free" -lt "$need" ]; do
+      sleep 60
+      if healthy; then echo "server became healthy elsewhere; nothing to do"; exit 0; fi
+      free=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits -i "$GPU")
+      echo "  $(date +%H:%M:%S) GPU $GPU free=${free}MiB / need=${need}MiB"
+    done
+  elif [ "${FORCE:-0}" != 1 ] && [ "${DRYRUN:-0}" != 1 ]; then
+    echo "REFUSED: GPU $GPU has ${free}MiB free but util $UTIL requires ${need}MiB."
+    echo "Use another GPU (GPU=<n> start-qwen38-distill $cmd), free the job holding it, WAIT=1, or FORCE=1."
+    exit 1
+  fi
+fi
+echo "mode=$cmd gpu=$GPU free=${free}MiB util=$UTIL need=${need}MiB quant=${QUANT[*]:-none} name=$NAME"
+echo "log=$LOGFILE"
+
+ARGS=(
+  env CUDA_VISIBLE_DEVICES="$GPU" "$VLLM" serve "$MODEL"
+  --served-model-name "$NAME"
+  --host "$HOST" --port "$PORT"
+  --api-key "$API_KEY"
+  --trust-remote-code
+  --dtype bfloat16
+  --max-model-len "$MAXLEN"
+  --max-num-seqs "$MAXSEQ"
+  --gpu-memory-utilization "$UTIL"
+  ${QUANT[@]+"${QUANT[@]}"}
+  --enable-auto-tool-choice
+  --tool-call-parser qwen3_xml
+  --reasoning-parser qwen3
+  --default-chat-template-kwargs "{\"reasoning_effort\":\"$EFFORT\"}"
+)
+
+if [ "${DRYRUN:-0}" = 1 ]; then
+  echo "DRYRUN (not launching):"
+  printf '%q ' "${ARGS[@]}"
+  echo
+  exit 0
+fi
+
+setsid nohup "${ARGS[@]}" >>"$LOGFILE" 2>&1 &
+
+PID=$!
+echo "$PID" > "$PIDFILE"
+echo "started pid=$PID (process group leader)"
+
+echo "waiting for readiness (up to 20 min)..."
+for i in $(seq 1 240); do
+  if healthy; then
+    echo "READY  $NAME  ->  http://$HOST:$PORT/v1"
+    exit 0
+  fi
+  if ! kill -0 "$PID" 2>/dev/null; then
+    echo "FAILED: server process died; last 40 log lines:"
+    tail -40 "$LOGFILE"
+    rm -f "$PIDFILE"
+    exit 1
+  fi
+  sleep 5
+done
+echo "TIMEOUT after 20 min; see $LOGFILE"
+exit 1
