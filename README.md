@@ -1,7 +1,8 @@
 # opencode_local_agents
 
 Local vLLM servers and opencode wiring so opencode runs entirely on this
-box's H100s — no API key, no traffic leaving the machine. Three agents:
+box's H100s — no API key; model traffic never leaves the machine (only
+web searches do, see section 6). Three agents:
 
 | Agent | Weights | Port | Shortcut | Launcher |
 |---|---|---|---|---|
@@ -21,10 +22,12 @@ opencode_local_agents/
 ├── bin/start-qwen38      ->  ~/.local/bin/start-qwen38    (chmod +x)
 ├── bin/start-qwen38-distill -> ~/.local/bin/start-qwen38-distill (chmod +x)
 ├── bin/start-gemma4      ->  ~/.local/bin/start-gemma4    (chmod +x)
-├── shell/aliases.sh      ->  append to ~/.bashrc          (sqwen/sqwend/sgemma)
+├── shell/aliases.sh      ->  append to ~/.bashrc          (sqwen/sqwend/sgemma,
+│                                                          OPENCODE_ENABLE_EXA)
 ├── opencode/config.jsonc ->  merge into ~/.config/opencode/opencode.jsonc
 ├── opencode/skills/      ->  copy into ~/.config/opencode/skills/
 ├── opencode/plugin/      ->  copy into ~/.config/opencode/plugin/
+├── opencode/prompts/     ->  copy into ~/.config/opencode/prompts/
 └── README.md             ->  this file
 ```
 
@@ -131,6 +134,39 @@ session's provider is on localhost, makes it fit a 27-31B model:
 ```bash
 mkdir -p ~/.config/opencode/plugin
 cp opencode/plugin/local-compaction.ts ~/.config/opencode/plugin/
+```
+
+### 6. `opencode/prompts/local.md` + `opencode/plugin/local-prompt.ts` — system prompt for local models
+
+For any model whose provider is on localhost, `local-prompt.ts` swaps
+opencode's built-in system prompt (the generic one every non-GPT/Claude/
+Gemini model gets, ~2k tokens) for `prompts/local.md`. Hosted models are
+untouched, and everything opencode appends after the prompt (environment,
+AGENTS.md / `~/.claude/CLAUDE.md`, skills) stays. `local.md` is re-read on
+every request, so edits apply without a restart.
+
+`local.md` covers: look before acting, minimal idiomatic edits, verifying
+with the project's own tests/linters, CSV (pandas) and PDF (pypdf) reading
+with the sarbajit conda python, web research (search, then fetch and cite
+primary sources at the right version), and git rules (commit only when
+asked, push only when asked, the user's identity, no AI attribution, no
+destructive commands). It drops the built-in "under 4 lines / one-word
+answers" rule, which cut code explanations short.
+
+The built-in prompt is located by its fixed first and last lines; if an
+opencode update changes them, the plugin does nothing and the built-in
+prompt is used.
+
+**Web search.** opencode only registers its `websearch` tool for the
+opencode-hosted provider unless `OPENCODE_ENABLE_EXA=1` is set, so
+`shell/aliases.sh` exports it. Searches go to Exa (no API key needed;
+`EXA_API_KEY` raises limits) — this is the one path where queries leave
+the machine. `webfetch` works without it.
+
+```bash
+mkdir -p ~/.config/opencode/plugin ~/.config/opencode/prompts
+cp opencode/plugin/local-prompt.ts ~/.config/opencode/plugin/
+cp opencode/prompts/local.md ~/.config/opencode/prompts/
 ```
 
 ## Usage

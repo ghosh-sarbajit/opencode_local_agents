@@ -102,3 +102,7 @@ sgemma() {
             ;;
     esac
 }
+
+# opencode: expose the websearch tool (Exa) to all providers, including the
+# local vLLM models; without this only the opencode-hosted provider gets it.
+export OPENCODE_ENABLE_EXA=1
