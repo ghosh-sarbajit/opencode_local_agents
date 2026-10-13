@@ -83,12 +83,19 @@ Merge (don't blind-copy unless this is a fresh config) into
 - `provider.qwen-distill-local` — 3 models on `127.0.0.1:42071`
 - `provider.gemma-local` — 2 models on `127.0.0.1:42070`
 
-All declare `limit: { context: 65536, output: 32768 }`. That pairs with
-the launchers' `MAXLEN=74400`: opencode's send wall sits at
-`MAXLEN - 32000 = 42400` prompt tokens, compaction fires at
-`65536 - 32000 = 33536`, and the compaction call itself
-(`33536 + 32000 = 65536`) fits — 8864 tokens of slack. Changing one side
-means changing the other.
+Each model's `limit.context` is its launcher's `MAXLEN - 8192` (output
+stays 32768). opencode's send wall sits at `MAXLEN - 32000` prompt tokens,
+compaction fires at `context - 32000`, and the compaction call itself
+(`context`) fits under `MAXLEN`. Changing one side means changing the other.
+
+| Mode | `MAXLEN` | `limit.context` | Compacts at | Why this `MAXLEN` |
+|---|---|---|---|---|
+| qwen / qwen-distill 16 | 262144 | 253952 | 221952 | native max (no YaRN); KV pool is 313,069 tokens at util 0.94 |
+| qwen / qwen-distill 4 | 98304 | 90112 | 58112 | KV pool is 103,865 tokens at util 0.35 |
+| gemma 16 | 90112 | 81920 | 49920 | KV pool is 92,401 tokens (fp8 KV, util 0.94) |
+| all 8 (fp8) | 74400 | 65536 | 33536 | not measured yet; old budget |
+
+The pools are the "GPU KV cache size" lines from each server's boot log.
 
 **opencode reads config at startup only.** After any edit: restart the TUI
 (or `opencode run -m <provider>/<model>` for one-shots).

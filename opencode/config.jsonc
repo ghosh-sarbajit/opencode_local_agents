@@ -1,11 +1,14 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  // vLLM serves --max-model-len 74400. opencode requests
-  // min(limit.output, 32000) = 32000 completion tokens and fires compaction
-  // at context - requested_output = 65536 - 32000 = 33536 prompt tokens, so
-  // a send is only rejected above 74400 - 32000 = 42400 prompt tokens:
-  // 8864 tokens of slack for compaction to run, and the compaction call
-  // itself (33536 + 32000 = 65536) now fits instead of overflowing.
+  // Each model's limit.context = its launcher's MAXLEN - 8192. opencode
+  // requests min(limit.output, 32000) = 32000 completion tokens, fires
+  // compaction at context - 32000 prompt tokens, and a send is rejected by
+  // vLLM above MAXLEN - 32000; the 8192 gap is the slack for compaction to
+  // run, and the compaction call itself (context) fits under MAXLEN.
+  //   qwen bf16   MAXLEN 262144 -> context 253952 (compacts at 221952)
+  //   qwen mxfp4  MAXLEN  98304 -> context  90112 (compacts at  58112)
+  //   gemma bf16  MAXLEN  90112 -> context  81920 (compacts at  49920)
+  //   fp8 modes   MAXLEN  74400 -> context  65536 (compacts at  33536)
 "compaction": { "auto": true, "prune": true },
   "provider": {
     "qwen-local": {
@@ -22,7 +25,7 @@
           "attachment": true,
           "reasoning": true,
           "interleaved": "reasoning",
-          "limit": { "context": 65536, "output": 32768 },
+          "limit": { "context": 253952, "output": 32768 },
           "cost": { "input": 0, "output": 0 }
         },
         "qwen3.8-27b-fp8": {
@@ -40,7 +43,7 @@
           "attachment": true,
           "reasoning": true,
           "interleaved": "reasoning",
-          "limit": { "context": 65536, "output": 32768 },
+          "limit": { "context": 90112, "output": 32768 },
           "cost": { "input": 0, "output": 0 }
         }
       }
@@ -59,7 +62,7 @@
           "attachment": true,
           "reasoning": true,
           "interleaved": "reasoning",
-          "limit": { "context": 65536, "output": 32768 },
+          "limit": { "context": 253952, "output": 32768 },
           "cost": { "input": 0, "output": 0 }
         },
         "qwen3.8-27b-distill-fp8": {
@@ -77,7 +80,7 @@
           "attachment": true,
           "reasoning": true,
           "interleaved": "reasoning",
-          "limit": { "context": 65536, "output": 32768 },
+          "limit": { "context": 90112, "output": 32768 },
           "cost": { "input": 0, "output": 0 }
         }
       }
@@ -96,7 +99,7 @@
           "attachment": true,
           "reasoning": true,
           "interleaved": "reasoning",
-          "limit": { "context": 65536, "output": 32768 },
+          "limit": { "context": 81920, "output": 32768 },
           "cost": { "input": 0, "output": 0 }
         },
         "gemma-4-31b-fp8": {
