@@ -24,6 +24,7 @@ opencode_local_agents/
 ├── shell/aliases.sh      ->  append to ~/.bashrc          (sqwen/sqwend/sgemma)
 ├── opencode/config.jsonc ->  merge into ~/.config/opencode/opencode.jsonc
 ├── opencode/skills/      ->  copy into ~/.config/opencode/skills/
+├── opencode/plugin/      ->  copy into ~/.config/opencode/plugin/
 └── README.md             ->  this file
 ```
 
@@ -114,6 +115,23 @@ cp -r opencode/skills/* ~/.config/opencode/skills/
 Then restart opencode and ask, e.g. *"make references.bib for the papers in
 papers.txt"*. Optional env: `S2_API_KEY` (avoids Semantic Scholar 429s),
 `CROSSREF_MAILTO`.
+
+### 5. `opencode/plugin/local-compaction.ts` — compaction for local models
+
+opencode loads every `.ts` in `~/.config/opencode/plugin/` at startup. This
+one leaves the built-in compaction alone for hosted models and, when the
+session's provider is on localhost, makes it fit a 27-31B model:
+
+- drops reasoning traces and trims long tool outputs/arguments in the
+  history sent to the summarizer;
+- appends local-model rules after opencode's default summary template;
+- runs the summary call with thinking off, temperature 0.3 and at most
+  6000 output tokens (constants at the top of the file).
+
+```bash
+mkdir -p ~/.config/opencode/plugin
+cp opencode/plugin/local-compaction.ts ~/.config/opencode/plugin/
+```
 
 ## Usage
 
