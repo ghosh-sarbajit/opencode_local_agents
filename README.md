@@ -169,6 +169,27 @@ cp opencode/plugin/local-prompt.ts ~/.config/opencode/plugin/
 cp opencode/prompts/local.md ~/.config/opencode/prompts/
 ```
 
+### 7. What every request carries — prompt token budget
+
+Even "hello" sends a fixed prefix before the conversation. Measured on the
+distill (opencode 1.14.32) by capturing the request: **14,731 prompt tokens**.
+
+| Part | Tokens | Where it's written | How to shrink it |
+|---|---|---|---|
+| Skills list | ~6,990 | `name:` + `description:` frontmatter of every `SKILL.md` in `~/.config/opencode/skills/` and `~/.claude/skills/` (plus built-in `customize-opencode`, 124) | move skill folders out; `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1` hides `~/.claude/skills` |
+| Tool definitions | ~5,760 | built into the opencode binary (bash 1302, task 866, todowrite 658, read 476, websearch 473, edit 461, webfetch 328, grep 310, glob 265, write 249, skill 164) | turn tools off under `"tools"` in `opencode.jsonc` |
+| System prompt | ~1,382 | `~/.config/opencode/prompts/local.md` (section 6) | edit `local.md` |
+| `~/.claude/CLAUDE.md` | ~456 | read automatically by opencode | `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT=1` |
+| Environment | ~89 | generated per request (cwd, date, platform) | — |
+
+`OPENCODE_DISABLE_CLAUDE_CODE=1` disables both Claude imports. opencode also
+reads `~/.config/opencode/AGENTS.md` and any `AGENTS.md` / `CLAUDE.md` /
+`CONTEXT.md` in the project or its parent folders, if present.
+
+Each skill costs 100–230 tokens on every request whether it is used or not.
+Before the section 6 changes the prefix was ~14,704: `local.md` saved ~450
+tokens over the built-in prompt (~1,830) and `websearch` added ~470.
+
 ## Usage
 
 ```bash
