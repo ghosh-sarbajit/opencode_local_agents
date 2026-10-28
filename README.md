@@ -121,9 +121,31 @@ mkdir -p ~/.config/opencode/skills
 cp -r opencode/skills/* ~/.config/opencode/skills/
 ```
 
-Then restart opencode and ask, e.g. *"make references.bib for the papers in
-papers.txt"*. Optional env: `S2_API_KEY` (avoids Semantic Scholar 429s),
-`CROSSREF_MAILTO`.
+Then restart opencode. opencode lists every skill's `name:` + `description:`
+to the model, and the model loads the one whose description matches the task;
+naming the skill in the prompt forces it. In testing, the distill loaded
+`web-search-and-cite` unprompted for *"what is the latest released version of
+vLLM?"*, but answered a single-URL question with the built-in `webfetch`
+without loading `webfetch-and-summarize`. So name the heavier skills:
+
+| Ask | Skill |
+|---|---|
+| *"make references.bib for the papers in papers.txt"* | `paper_citation_download` |
+| *"use deep-research: compare vLLM and SGLang for MTP speculative decoding"* | `deep-research` |
+| *"run security-review on this branch"* | `security-review` |
+| *"plan-before-implement: add per-sample clipping to the trainer"* | `plan-before-implement` |
+| *"verify-change before you call it done"* | `verify-change` |
+
+`deep-research` and `plan-before-implement` write into the project they run
+in (`research/<slug>.md`, `plans/<slug>.md`).
+
+The web skills search through opencode's `websearch` tool, so they need
+`OPENCODE_ENABLE_EXA=1` (section 6). `deep-research/scripts/search.py` is a
+fallback for when Exa is unavailable: it uses `SEARXNG_URL`, `BRAVE_API_KEY`
+or `TAVILY_API_KEY`, whichever is set first, and exits with code 2 if none is.
+
+Optional env for `paper_citation_download`: `S2_API_KEY` (avoids Semantic
+Scholar 429s), `CROSSREF_MAILTO`.
 
 ### 5. `opencode/plugin/local-compaction.ts` — compaction for local models
 
@@ -193,6 +215,9 @@ reads `~/.config/opencode/AGENTS.md` and any `AGENTS.md` / `CLAUDE.md` /
 `CONTEXT.md` in the project or its parent folders, if present.
 
 Each skill costs 100–230 tokens on every request whether it is used or not.
+The six skills added after `paper_citation_download` have shorter
+descriptions: together they add 399 tokens (15,275 vs 14,876 for "hello" on
+the distill, opencode 1.18.35), ~66 each.
 Before the section 6 changes the prefix was ~14,704: `local.md` saved ~450
 tokens over the built-in prompt (~1,830) and `websearch` added ~470.
 
