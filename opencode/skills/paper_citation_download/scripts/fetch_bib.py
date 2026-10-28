@@ -110,6 +110,8 @@ def get(url, source, *, params=None, headers=None, retries=3, timeout=TIMEOUT):
 
 def split_name(full):
     """'USVSN Sai Prashanth' -> ('USVSN Sai', 'Prashanth'); keeps particles."""
+    if isinstance(full, dict):  # OpenReview author objects
+        full = full.get("profile") or full.get("username") or ""
     full = re.sub(r"\s+\d{4}$", "", (full or "").strip())  # DBLP homonym suffix
     if "," in full:
         last, first = [p.strip() for p in full.split(",", 1)]
