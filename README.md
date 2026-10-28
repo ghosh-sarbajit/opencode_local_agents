@@ -109,6 +109,12 @@ The pools are the "GPU KV cache size" lines from each server's boot log.
 | Skill | What it does |
 |---|---|
 | `paper_citation_download` | Turns a list of paper titles into a `.bib` in Google Scholar's BibTeX style, with `howpublished = "\url{DOI \| official page \| arXiv}"` and a short `comment` added to each entry. `scripts/fetch_bib.py` does the lookups: Scholar when it answers, otherwise DBLP, OpenReview, Crossref, Semantic Scholar, arXiv, OpenAlex, and the PMLR/NeurIPS indexes. It writes a review report, and the agent then resolves the flagged entries and fills in the comments. |
+| `webfetch-and-summarize` | Fetches one page (`gh` for GitHub links, raw or markdown sources preferred), only follows redirects that stay on the same host, saves binaries to disk, and answers only from the page with short quotes and a `Source:` line. |
+| `web-search-and-cite` | Searches with the built-in `websearch` tool using the current year, ranks sources by authority, and always ends with a `Sources:` list. |
+| `deep-research` | Splits a question into sub-questions, researches them in parallel `task` subagents, cross-checks claims, and writes a cited report to `research/<slug>.md`. `scripts/search.py` is an optional fallback search (SearXNG, Brave or Tavily via env vars). |
+| `security-review` | Audits a finished diff in two passes (find candidates, then filter false positives in parallel). It has a fixed list of exclusions and assumptions and only reports findings with confidence ≥ 8. |
+| `verify-change` | Before a change is reported done: write pass criteria, have a fresh subagent run them, and accept a PASS only when it comes with command output. Anything that can't be checked is reported as unverified. |
+| `plan-before-implement` | Read-only exploration, a concrete plan in `plans/<slug>.md`, then wait for approval and carry it out as `todowrite` items. |
 
 ```bash
 mkdir -p ~/.config/opencode/skills
