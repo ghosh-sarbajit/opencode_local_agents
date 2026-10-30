@@ -25,6 +25,7 @@ const LOCAL_RULES = `Additional rules (read carefully, they override anything ab
 - Do not paste code blocks or file contents. Point to them as path:line or path + symbol name instead.
 - Keep error messages to one line each, copied exactly.
 - Under "## Important Details", list every exact command that was run successfully and is likely to be needed again (build, test, run), plus any command that failed and why.
+- Also under "## Important Details", list every correction or preference the user stated during the session ("don't do X", "use Y instead"), word for word.
 - Under "## Next Move", write steps a fresh assistant can execute without re-reading the conversation.`
 
 const LOCAL_HOSTS = /^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1\])$/
