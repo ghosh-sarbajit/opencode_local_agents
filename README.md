@@ -38,7 +38,9 @@ opencode_local_agents/
 │   │   ├── deep-research/scripts/search.py
 │   │   ├── security-review/SKILL.md
 │   │   ├── verify-change/SKILL.md
-│   │   └── plan-before-implement/SKILL.md
+│   │   ├── plan-before-implement/SKILL.md
+│   │   ├── conventional-commits/SKILL.md            ->  ~/.claude/skills/conventional-commits/
+│   │   └── conventional-commits/scripts/check_commit_msg.py   (not ~/.c/oc; see §4)
 │   ├── plugin/local-compaction.ts  ->  ~/.c/oc/plugin/local-compaction.ts  (§5)
 │   ├── plugin/local-prompt.ts      ->  ~/.c/oc/plugin/local-prompt.ts      (§6)
 │   └── prompts/local.md            ->  ~/.c/oc/prompts/local.md            (§6)
@@ -48,6 +50,8 @@ opencode_local_agents/
 
 The skill paths are fixed: `web-search-and-cite` and `deep-research` call
 `~/.config/opencode/skills/deep-research/scripts/search.py`,
+`conventional-commits` calls
+`~/.claude/skills/conventional-commits/scripts/check_commit_msg.py`,
 `paper_citation_download` calls
 `~/.config/opencode/skills/paper_citation_download/scripts/fetch_bib.py`, and
 `local-prompt.ts` reads `../prompts/local.md` relative to itself, so
@@ -59,7 +63,9 @@ Install everything (fresh machine; merge `config.jsonc` by hand otherwise):
 install -m 755 bin/start-qwen38 bin/start-qwen38-distill bin/start-gemma4 ~/.local/bin/
 cat shell/aliases.sh >> ~/.bashrc
 mkdir -p ~/.config/opencode/{skills,plugin,prompts}
-cp -r opencode/skills/* ~/.config/opencode/skills/
+mkdir -p ~/.claude/skills
+cp -r opencode/skills/conventional-commits ~/.claude/skills/
+cp -r $(ls -d opencode/skills/*/ | grep -v conventional-commits) ~/.config/opencode/skills/
 cp opencode/plugin/*.ts ~/.config/opencode/plugin/
 cp opencode/prompts/local.md ~/.config/opencode/prompts/
 ```
@@ -148,11 +154,20 @@ The pools are the "GPU KV cache size" lines from each server's boot log.
 | `security-review` | Audits a finished diff in two passes (find candidates, then filter false positives in parallel). It has a fixed list of exclusions and assumptions and only reports findings with confidence ≥ 8. |
 | `verify-change` | Before a change is reported done: write pass criteria, have a fresh subagent run them, and accept a PASS only when it comes with command output. Anything that can't be checked is reported as unverified. |
 | `plan-before-implement` | Read-only exploration, a concrete plan in `plans/<slug>.md`, then wait for approval and carry it out as `todowrite` items. |
+| `conventional-commits` | Commit messages in [Conventional Commits](https://www.conventionalcommits.org/) format, following [qoomon's cheatsheet](https://gist.github.com/qoomon/5dfcdf8eec66a051ecd85625518cfd13): `type(scope)!: description`, with types feat/fix/refactor/perf/style/test/docs/build/ops/chore, an imperative lowercase description, a why-body and a `BREAKING CHANGE:` footer. `scripts/check_commit_msg.py msg.txt` checks a message before `git commit -F msg.txt`. |
 
 ```bash
-mkdir -p ~/.config/opencode/skills
-cp -r opencode/skills/* ~/.config/opencode/skills/
+mkdir -p ~/.config/opencode/skills ~/.claude/skills
+cp -r $(ls -d opencode/skills/*/ | grep -v conventional-commits) ~/.config/opencode/skills/
+cp -r opencode/skills/conventional-commits ~/.claude/skills/
 ```
+
+`conventional-commits` goes to `~/.claude/skills/` instead, because Claude Code and opencode both
+read that folder, so one copy serves both. If you copy it into
+`~/.config/opencode/skills/` as well, opencode lists it twice. To make it the
+default for every commit, `~/.claude/CLAUDE.md` (which opencode also reads)
+has a "Git commits and pushes" rule pointing to the skill, and the Git section of
+`local.md` says the same thing for local models.
 
 Then restart opencode. opencode lists every skill's `name:` + `description:`
 to the model, and the model loads the one whose description matches the task;
