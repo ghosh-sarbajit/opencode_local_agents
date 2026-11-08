@@ -16,10 +16,18 @@
 #                DRYRUN=1 (print the command, exit)
 set -euo pipefail
 
-MODEL=/opt/dlami/nvme/sarbajit/local_models/Qwen3.8-27B-Fable-Distill
-VLLM=/opt/dlami/nvme/sarbajit/miniconda3/bin/vllm
-# flashinfer's JIT and torch.compile shell out to ninja; it lives here.
-export PATH="/opt/dlami/nvme/sarbajit/miniconda3/bin:$PATH"
+# Paths: the first one that exists wins (AWS GPU server, then the anviksha
+# workstation). MODEL= and VLLM= override both.
+pick() { for p in "$@"; do [ -e "$p" ] && { echo "$p"; return; }; done; echo "$1"; }
+MODEL=${MODEL:-$(pick /opt/dlami/nvme/sarbajit/local_models/Qwen3.8-27B-Fable-Distill \
+                      /data/sarbajit/from_aws_server/local_models/Qwen3.8-27B-Fable-Distill)}
+VLLM=${VLLM:-$(pick /opt/dlami/nvme/sarbajit/miniconda3/bin/vllm \
+                    /data/sarbajit/envs/vllm030/bin/vllm)}
+# flashinfer's JIT and torch.compile shell out to ninja; it lives next to vllm.
+export PATH="$(dirname "$VLLM"):$PATH"
+# If the env ships its own nvcc (anviksha: conda-forge cuda-nvcc 13.0, since
+# /usr/bin/nvcc is too old for flashinfer), make flashinfer's JIT use it.
+[ -x "$(dirname "$VLLM")/nvcc" ] && export CUDA_HOME="$(dirname "$(dirname "$VLLM")")"
 HOST=127.0.0.1
 PORT=${PORT:-42071}
 # MAXLEN defaults per mode (set in the mode table below). Only the 16
@@ -89,7 +97,20 @@ case "$cmd" in
    8) GPU_DEFAULT=0; QUANT=(--quantization fp8);  UTIL=0.50; MAXLEN_DEFAULT=74400; NAME=qwen3.8-27b-distill-fp8 ;;
    4) GPU_DEFAULT=5; QUANT=(--quantization online --quantization-config '{"targets": {"re:(?!.*visual)(?:.*_proj|lm_head).*": "mxfp4"}}'); UTIL=0.35; MAXLEN_DEFAULT=98304; NAME=qwen3.8-27b-distill-mxfp4 ;;
 esac
+KVDTYPE=()
 GPU=${GPU:-$GPU_DEFAULT}
+# 48 GB cards (anviksha's RTX A6000): fp8 weights (~30 GiB) leave too little
+# for a bf16 KV cache at full context, so store the KV cache in fp8 as well.
+# On sm86 only FlashInfer serves an fp8 KV cache (TRITON_ATTN needs sm89+),
+# and it JIT-compiles on first start (a few minutes; cached afterwards).
+if [ "$cmd" = 8 ] && [ "$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits -i "$GPU")" -lt 60000 ]; then
+  UTIL=0.94; MAXLEN_DEFAULT=262144; KVDTYPE=(--kv-cache-dtype fp8)
+fi
+# GPUs without FP8 compute (below sm89, e.g. A6000/A100): vLLM 0.30's auto
+# pick is a CUTLASS w8a8 kernel that crashes on sm80; force weight-only Marlin.
+if [ "$cmd" = 8 ] && awk -v c="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader -i "$GPU")" 'BEGIN{exit !(c < 8.9)}'; then
+  KVDTYPE+=(--kernel-config '{"linear_backend":"marlin"}')
+fi
 MAXLEN=${MAXLEN:-$MAXLEN_DEFAULT}
 
 if alive && [ "${FORCE:-0}" != 1 ] && [ "${DRYRUN:-0}" != 1 ]; then
@@ -129,6 +150,7 @@ ARGS=(
   --max-num-seqs "$MAXSEQ"
   --gpu-memory-utilization "$UTIL"
   ${QUANT[@]+"${QUANT[@]}"}
+  ${KVDTYPE[@]+"${KVDTYPE[@]}"}
   --enable-auto-tool-choice
   --tool-call-parser qwen3_xml
   --reasoning-parser qwen3

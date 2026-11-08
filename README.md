@@ -102,7 +102,8 @@ same quantization targets, util values and parsers apply. It runs on its own
 port, so it can be up at the same time as `start-qwen38` on another GPU.
 
 Paths hardcoded at the top of each script — adjust if the models or the
-vLLM conda env move:
+vLLM conda env move. `start-qwen38-distill` tries the AWS paths first and
+then the anviksha ones (below); `MODEL=` and `VLLM=` override both.
 
 | | value |
 |---|---|
@@ -111,6 +112,29 @@ vLLM conda env move:
 | Gemma weights | `/opt/dlami/nvme/sarbajit/local_models/gemma4/gemma-4-31B-it` |
 | Gemma MTP drafter | `.../gemma-4-31B-it-assistant` |
 | vLLM | `/opt/dlami/nvme/sarbajit/miniconda3/bin/vllm` (v0.30.0) |
+
+**anviksha (8x RTX A6000 48 GB, driver 590), `start-qwen38-distill 8` only.**
+Weights `/data/sarbajit/from_aws_server/local_models/Qwen3.8-27B-Fable-Distill`,
+vLLM `/data/sarbajit/envs/vllm030/bin/vllm` (conda env, Python 3.12,
+`pip install vllm==0.30.0`, torch 2.13+cu130, plus conda-forge
+`cuda-nvcc=13.0 cuda-cudart-dev=13.0 cuda-cccl=13.0`). On a card under 60 GB
+mode `8` switches to util 0.94, MAXLEN 262144 and `--kv-cache-dtype fp8`;
+measured: weights 28.61 GiB, **GPU KV cache 417,321 tokens** (1.59x of
+262144), first start ~4 min. Three things the script handles on sm86:
+
+- vLLM 0.30 auto-picks a CUTLASS w8a8 kernel for online fp8, which crashes
+  on sm80/86 (`cutlass_scaled_mm_sm80_epilogue`). Below sm89 the script
+  adds `--kernel-config '{"linear_backend":"marlin"}'` (weight-only fp8).
+- `TRITON_ATTN` refuses an fp8 KV cache below sm89, so FlashInfer is used.
+  Its JIT build needs a CUDA 13 `nvcc`; `/usr/bin/nvcc` there is too old
+  (`Unknown option '--compress-mode=size'`), so when the env has its own
+  `nvcc` the script sets `CUDA_HOME` to the env.
+- Checked: a 177,210-token needle prompt answered correctly (prefill 202 s),
+  tool calls parse, and opencode runs it with the Read tool.
+
+In `opencode.jsonc` on anviksha set the distill fp8 `limit.context` to
+253952 (262144 - 8192); the 65536 in `opencode/config.jsonc` is for the AWS
+GPU, where fp8 keeps MAXLEN 74400.
 
 ### 2. `shell/aliases.sh` — bashrc shortcuts
 
