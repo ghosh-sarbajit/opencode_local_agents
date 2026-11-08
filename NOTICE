@@ -1,0 +1,41 @@
+opencode_local_agents
+Copyright 2026 Sarbajit Ghosh
+
+The six skills listed below are licensed under the Apache License, Version 2.0
+(see LICENSES/Apache-2.0.txt):
+
+    opencode/skills/gpu-servers/
+    opencode/skills/remote-gpu-jobs/
+    opencode/skills/llm-finetuning/
+    opencode/skills/llm-evaluation/
+    opencode/skills/vllm-serving/
+    opencode/skills/aws-data-transfer/
+
+They contain material derived from aws/agent-toolkit-for-aws
+(https://github.com/aws/agent-toolkit-for-aws, commit 0a218f8), which carries
+the following notice:
+
+    Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+Derived and modified files (Apache License 2.0):
+
+- opencode/skills/llm-finetuning/scripts/format_detector.py
+    from skills/core-skills/aws-ai-ml/references/dataset-evaluation/scripts/format_detector.py
+    Modified: boto3 is imported only for s3:// paths.
+- opencode/skills/llm-finetuning/references/technique-guide.md
+    from skills/core-skills/aws-ai-ml/references/finetuning-technique/references/finetune_technique_selection_guide.md
+    Modified: mapped to TRL trainers, removed SageMaker recipe checks and RLAIF.
+- opencode/skills/llm-finetuning/references/data-formats.md
+    from skills/core-skills/aws-ai-ml/references/dataset-evaluation/references/strategy_data_requirements.md
+    Modified: kept open-weights formats, matched to TRL, removed Nova/SageMaker sections.
+- opencode/skills/llm-finetuning/SKILL.md, opencode/skills/llm-evaluation/SKILL.md,
+  opencode/skills/vllm-serving/SKILL.md
+    Workflow structure adapted from skills/core-skills/aws-ai-ml (planning, finetuning-technique,
+    dataset-evaluation, model-evaluation, model-deployment/optimization references), rewritten
+    for on-prem GPUs with TRL and vLLM.
+- opencode/skills/aws-data-transfer/SKILL.md
+    Credential guidance adapted from skills/core-skills/signing-in-to-aws; storage practices
+    from skills/core-skills/aws-storage.
+
+"AWS", "Amazon SageMaker" and related names are trademarks of Amazon.com, Inc. or its
+affiliates. This project is not affiliated with or endorsed by Amazon Web Services.

@@ -39,11 +39,20 @@ opencode_local_agents/
 │   │   ├── security-review/SKILL.md
 │   │   ├── verify-change/SKILL.md
 │   │   ├── plan-before-implement/SKILL.md
+│   │   ├── gpu-servers/SKILL.md, scripts/gpu_status.sh            (GPU servers, §4)
+│   │   ├── remote-gpu-jobs/SKILL.md, scripts/remote_run.sh
+│   │   ├── llm-finetuning/SKILL.md, references/*.md, scripts/format_detector.py,
+│   │   │                  templates/{sft_lora,dpo_lora,merge_lora}.py
+│   │   ├── llm-evaluation/SKILL.md, scripts/{generate,score,judge}.py
+│   │   ├── vllm-serving/SKILL.md
+│   │   ├── aws-data-transfer/SKILL.md
 │   │   ├── conventional-commits/SKILL.md            ->  ~/.claude/skills/conventional-commits/
 │   │   └── conventional-commits/scripts/check_commit_msg.py   (not ~/.c/oc; see §4)
 │   ├── plugin/local-compaction.ts  ->  ~/.c/oc/plugin/local-compaction.ts  (§5)
 │   ├── plugin/local-prompt.ts      ->  ~/.c/oc/plugin/local-prompt.ts      (§6)
 │   └── prompts/local.md            ->  ~/.c/oc/prompts/local.md            (§6)
+├── NOTICE                        ->  repo only; attribution for the AWS-derived skills
+├── LICENSES/Apache-2.0.txt       ->  repo only; licence of those six skills
 ├── .gitignore                    ->  repo only, not installed
 └── README.md                     ->  this file, not installed
 ```
@@ -155,6 +164,30 @@ The pools are the "GPU KV cache size" lines from each server's boot log.
 | `verify-change` | Before a change is reported done: write pass criteria, have a fresh subagent run them, and accept a PASS only when it comes with command output. Anything that can't be checked is reported as unverified. |
 | `plan-before-implement` | Read-only exploration, a concrete plan in `plans/<slug>.md`, then wait for approval and carry it out as `todowrite` items. |
 | `conventional-commits` | Commit messages in [Conventional Commits](https://www.conventionalcommits.org/) format, following [qoomon's cheatsheet](https://gist.github.com/qoomon/5dfcdf8eec66a051ecd85625518cfd13): `type(scope)!: description`, with types feat/fix/refactor/perf/style/test/docs/build/ops/chore, an imperative lowercase description, a why-body and a `BREAKING CHANGE:` footer. `scripts/check_commit_msg.py msg.txt` checks a message before `git commit -F msg.txt`. |
+
+#### GPU-server skills (bharati, kanaada)
+
+Six skills for running work on the two lab GPU servers over SSH (`Host bharati`
+and `Host kanaada` in `~/.ssh/config`). The fine-tuning, evaluation, serving and
+data-transfer workflows are adapted from the `aws-ai-ml`, `signing-in-to-aws`
+and `aws-storage` skills of
+[aws/agent-toolkit-for-aws](https://github.com/aws/agent-toolkit-for-aws)
+(Apache-2.0), with SageMaker/Bedrock replaced by TRL and vLLM. These six are
+Apache-2.0; see `NOTICE`.
+
+| Skill | What it does |
+|---|---|
+| `gpu-servers` | Hardware, disks, conda paths and shared-machine rules for both servers. `scripts/gpu_status.sh [host]` shows FREE/BUSY GPUs, who runs what, free disk and tmux sessions. |
+| `remote-gpu-jobs` | rsync code over, launch in a detached tmux session pinned to a GPU with `scripts/remote_run.sh <host> <session> <gpu-ids> <workdir> '<cmd>'` (log ends with `=== exit code N ===`), monitor, fetch results, stop. |
+| `llm-finetuning` | SFT/DPO with LoRA or QLoRA via TRL: pick the technique, validate the JSONL (`format_detector.py`), check it fits in GPU memory, launch from `templates/`, resume from checkpoints, merge the adapter. |
+| `llm-evaluation` | Generate with vLLM (`generate.py`, base or `--lora`), score with exact/contains/F1/regex or an LLM judge (`judge.py`), report bootstrap 95% CIs and paired base-vs-tuned comparisons (`score.py`). |
+| `vllm-serving` | Which models fit where, `vllm serve` bound to 127.0.0.1 in tmux, SSH tunnel, tool-call parsers, an opencode provider block, and `vllm bench serve`. |
+| `aws-data-transfer` | Move data between S3, the AWS cluster and the servers without writing AWS keys to the shared machines (credentials over stdin, tar pipes, HF downloads on the server). |
+
+Both servers have NVIDIA driver 535 (CUDA 12.2): PyPI torch 2.11+ / vLLM 0.21+
+are CUDA 13 builds and fail with "driver too old". Install
+`"vllm==0.18.1" trl peft datasets accelerate bitsandbytes` (torch 2.10+cu128).
+All six were smoke-tested on bharati with SmolLM2-135M under that pin.
 
 ```bash
 mkdir -p ~/.config/opencode/skills ~/.claude/skills
@@ -280,6 +313,8 @@ Each skill costs 100–230 tokens on every request whether it is used or not.
 The six skills added after `paper_citation_download` have shorter
 descriptions: together they add 399 tokens (15,275 vs 14,876 for "hello" on
 the distill, opencode 1.18.35), ~66 each.
+The six GPU-server skills have longer descriptions: about 590 tokens together
+(estimated at 4 characters per token, not measured).
 The harness rules in section 6 grew `local.md` by 493 tokens (1,322 → 1,815
 by the distill's `/tokenize`; the table's ~1,382 → ~1,875), so "hello" now
 costs ~15,770. The compaction rule adds 35 tokens to the summary call only.
