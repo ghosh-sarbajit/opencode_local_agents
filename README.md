@@ -47,7 +47,8 @@ opencode_local_agents/
 │   │   ├── vllm-serving/SKILL.md
 │   │   ├── aws-data-transfer/SKILL.md
 │   │   ├── conventional-commits/SKILL.md            ->  ~/.claude/skills/conventional-commits/
-│   │   └── conventional-commits/scripts/check_commit_msg.py   (not ~/.c/oc; see §4)
+│   │   ├── conventional-commits/scripts/check_commit_msg.py   (not ~/.c/oc; see §4)
+│   │   └── pr-review/SKILL.md                       ->  ~/.claude/skills/pr-review/
 │   ├── plugin/local-compaction.ts  ->  ~/.c/oc/plugin/local-compaction.ts  (§5)
 │   ├── plugin/local-prompt.ts      ->  ~/.c/oc/plugin/local-prompt.ts      (§6)
 │   └── prompts/local.md            ->  ~/.c/oc/prompts/local.md            (§6)
@@ -73,8 +74,8 @@ install -m 755 bin/start-qwen38 bin/start-qwen38-distill bin/start-gemma4 ~/.loc
 cat shell/aliases.sh >> ~/.bashrc
 mkdir -p ~/.config/opencode/{skills,plugin,prompts}
 mkdir -p ~/.claude/skills
-cp -r opencode/skills/conventional-commits ~/.claude/skills/
-cp -r $(ls -d opencode/skills/*/ | grep -v conventional-commits) ~/.config/opencode/skills/
+cp -r opencode/skills/{conventional-commits,pr-review} ~/.claude/skills/
+cp -r $(ls -d opencode/skills/*/ | grep -Ev 'conventional-commits|pr-review') ~/.config/opencode/skills/
 cp opencode/plugin/*.ts ~/.config/opencode/plugin/
 cp opencode/prompts/local.md ~/.config/opencode/prompts/
 ```
@@ -188,6 +189,7 @@ The pools are the "GPU KV cache size" lines from each server's boot log.
 | `verify-change` | Before a change is reported done: write pass criteria, have a fresh subagent run them, and accept a PASS only when it comes with command output. Anything that can't be checked is reported as unverified. |
 | `plan-before-implement` | Read-only exploration, a concrete plan in `plans/<slug>.md`, then wait for approval and carry it out as `todowrite` items. |
 | `conventional-commits` | Commit messages in [Conventional Commits](https://www.conventionalcommits.org/) format, following [qoomon's cheatsheet](https://gist.github.com/qoomon/5dfcdf8eec66a051ecd85625518cfd13): `type(scope)!: description`, with types feat/fix/refactor/perf/style/test/docs/build/ops/chore, an imperative lowercase description, a why-body and a `BREAKING CHANGE:` footer. `scripts/check_commit_msg.py msg.txt` checks a message before `git commit -F msg.txt`. |
+| `pr-review` | Reviews a PR/MR from a worktree at its head SHA, tracing callers and dependencies rather than reading only the diff. Drafts formal comments, waits for the user's approval, then posts each finding as its own inline comment with no review body. Also covers the self-review to do before opening a PR/MR. |
 
 #### GPU-server skills (bharati, kanaada)
 
@@ -215,13 +217,13 @@ All six were smoke-tested on bharati with SmolLM2-135M under that pin.
 
 ```bash
 mkdir -p ~/.config/opencode/skills ~/.claude/skills
-cp -r $(ls -d opencode/skills/*/ | grep -v conventional-commits) ~/.config/opencode/skills/
-cp -r opencode/skills/conventional-commits ~/.claude/skills/
+cp -r $(ls -d opencode/skills/*/ | grep -Ev 'conventional-commits|pr-review') ~/.config/opencode/skills/
+cp -r opencode/skills/{conventional-commits,pr-review} ~/.claude/skills/
 ```
 
-`conventional-commits` goes to `~/.claude/skills/` instead, because Claude Code and opencode both
-read that folder, so one copy serves both. If you copy it into
-`~/.config/opencode/skills/` as well, opencode lists it twice. To make it the
+`conventional-commits` and `pr-review` go to `~/.claude/skills/` instead, because Claude Code and opencode both
+read that folder, so one copy serves both. If you copy them into
+`~/.config/opencode/skills/` as well, opencode lists them twice. To make conventional-commits the
 default for every commit, `~/.claude/CLAUDE.md` (which opencode also reads)
 has a "Git commits and pushes" rule pointing to the skill, and the Git section of
 `local.md` says the same thing for local models.
